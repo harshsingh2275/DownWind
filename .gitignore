@@ -35,3 +35,9 @@ agents.md
 task.md
 docs/
 
+# Raw boundary source files & archives
+backend/data/geoBoundaries*
+backend/data/CITATION-AND-USE*
+*.zip
+
+

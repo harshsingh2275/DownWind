@@ -1,0 +1,138 @@
+[
+  {
+    "id": "delhi",
+    "name": "Delhi",
+    "state": "Delhi",
+    "lat": 28.61,
+    "lon": 77.23,
+    "population": 16787941,
+    "populationSource": "https://en.wikipedia.org/wiki/Delhi",
+    "sourceNote": "NCT of Delhi"
+  },
+  {
+    "id": "gurugram",
+    "name": "Gurugram",
+    "state": "Haryana",
+    "lat": 28.46,
+    "lon": 77.03,
+    "population": 876969,
+    "populationSource": "https://en.wikipedia.org/wiki/Gurgaon"
+  },
+  {
+    "id": "noida",
+    "name": "Noida",
+    "state": "Uttar Pradesh",
+    "lat": 28.57,
+    "lon": 77.32,
+    "population": 637272,
+    "populationSource": "https://en.wikipedia.org/wiki/Noida"
+  },
+  {
+    "id": "ghaziabad",
+    "name": "Ghaziabad",
+    "state": "Uttar Pradesh",
+    "lat": 28.67,
+    "lon": 77.42,
+    "population": 1729000,
+    "populationSource": "https://en.wikipedia.org/wiki/Ghaziabad"
+  },
+  {
+    "id": "faridabad",
+    "name": "Faridabad",
+    "state": "Haryana",
+    "lat": 28.42,
+    "lon": 77.31,
+    "population": 1414050,
+    "populationSource": "https://en.wikipedia.org/wiki/Faridabad"
+  },
+  {
+    "id": "chandigarh",
+    "name": "Chandigarh",
+    "state": "Chandigarh",
+    "lat": 30.73,
+    "lon": 76.78,
+    "population": 1055450,
+    "populationSource": "https://en.wikipedia.org/wiki/Chandigarh"
+  },
+  {
+    "id": "ludhiana",
+    "name": "Ludhiana",
+    "state": "Punjab",
+    "lat": 30.91,
+    "lon": 75.85,
+    "population": 1618879,
+    "populationSource": "https://en.wikipedia.org/wiki/Ludhiana"
+  },
+  {
+    "id": "amritsar",
+    "name": "Amritsar",
+    "state": "Punjab",
+    "lat": 31.64,
+    "lon": 74.86,
+    "population": 1132383,
+    "populationSource": "https://en.wikipedia.org/wiki/Amritsar"
+  },
+  {
+    "id": "patiala",
+    "name": "Patiala",
+    "state": "Punjab",
+    "lat": 30.34,
+    "lon": 76.40,
+    "population": 445196,
+    "populationSource": "https://en.wikipedia.org/wiki/List_of_cities_in_Punjab,_India_by_population"
+  },
+  {
+    "id": "jalandhar",
+    "name": "Jalandhar",
+    "state": "Punjab",
+    "lat": 31.33,
+    "lon": 75.58,
+    "population": 868929,
+    "populationSource": "https://en.wikipedia.org/wiki/Jalandhar"
+  },
+  {
+    "id": "karnal",
+    "name": "Karnal",
+    "state": "Haryana",
+    "lat": 29.69,
+    "lon": 76.99,
+    "population": 286974,
+    "populationSource": "https://en.wikipedia.org/wiki/Karnal"
+  },
+  {
+    "id": "panipat",
+    "name": "Panipat",
+    "state": "Haryana",
+    "lat": 29.39,
+    "lon": 76.97,
+    "population": 294150,
+    "populationSource": "https://en.wikipedia.org/wiki/Panipat"
+  },
+  {
+    "id": "ambala",
+    "name": "Ambala",
+    "state": "Haryana",
+    "lat": 30.38,
+    "lon": 76.78,
+    "population": 207934,
+    "populationSource": "https://en.wikipedia.org/wiki/Ambala"
+  },
+  {
+    "id": "rohtak",
+    "name": "Rohtak",
+    "state": "Haryana",
+    "lat": 28.89,
+    "lon": 76.58,
+    "population": 373133,
+    "populationSource": "https://en.wikipedia.org/wiki/Rohtak"
+  },
+  {
+    "id": "hisar",
+    "name": "Hisar",
+    "state": "Haryana",
+    "lat": 29.15,
+    "lon": 75.70,
+    "population": 301249,
+    "populationSource": "https://en.wikipedia.org/wiki/Hisar_(city)"
+  }
+]
