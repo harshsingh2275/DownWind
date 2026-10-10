@@ -14,6 +14,8 @@ from src.wind import (
     assign_wind_to_cluster,
     average_wind,
     build_wind_grid,
+    fetch_wind_archive,
+    fetch_wind_data,
     fetch_wind_forecast,
     nearest_grid_point,
     parse_wind_forecast,
@@ -184,3 +186,37 @@ def test_fetch_wind_forecast_validation() -> None:
     too_many = [(30.0 + i * 0.01, 75.0) for i in range(1001)]
     with pytest.raises(ValueError, match="exceeds maximum allowed"):
         fetch_wind_forecast(too_many)
+
+
+def test_fetch_wind_archive_success_url_structure() -> None:
+    """Verify fetch_wind_archive builds correct URL with start_date and end_date."""
+    mock_resp = MagicMock()
+    payload = json.dumps([{"latitude": 30.0, "longitude": 75.0}]).encode("utf-8")
+    mock_resp.read.return_value = payload
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
+        res = fetch_wind_archive([(30.0, 75.0)], date="2024-11-01")
+        assert len(res) == 1
+        assert mock_urlopen.call_count == 1
+
+        call_args = mock_urlopen.call_args
+        req = call_args[0][0]
+        assert "archive-api.open-meteo.com" in req.full_url
+        assert "start_date=2024-11-01" in req.full_url
+        assert "end_date=2024-11-01" in req.full_url
+
+
+def test_fetch_wind_data_routing() -> None:
+    """Verify fetch_wind_data routes to archive when date is provided and forecast when None."""
+    with (
+        patch("src.wind.fetch_wind_archive", return_value=[{"mode": "archive"}]) as mock_arch,
+        patch("src.wind.fetch_wind_forecast", return_value=[{"mode": "forecast"}]) as mock_fc,
+    ):
+        r1 = fetch_wind_data([(30.0, 75.0)], date="2024-11-01")
+        assert r1 == [{"mode": "archive"}]
+        mock_arch.assert_called_once()
+
+        r2 = fetch_wind_data([(30.0, 75.0)], date=None)
+        assert r2 == [{"mode": "forecast"}]
+        mock_fc.assert_called_once()

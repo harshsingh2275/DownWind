@@ -21,8 +21,9 @@ from src.config import (
 )
 from src.geo import circular_mean_deg, haversine_km
 
-# Open-Meteo forecast endpoint
+# Open-Meteo forecast and historical archive endpoints
 OPEN_METEO_FORECAST_URL: str = "https://api.open-meteo.com/v1/forecast"
+OPEN_METEO_ARCHIVE_URL: str = "https://archive-api.open-meteo.com/v1/archive"
 
 
 class WindError(Exception):
@@ -165,6 +166,89 @@ def fetch_wind_forecast(
         raise WindError(f"Open-Meteo network error: {exc.reason}") from exc
     except Exception as exc:
         raise WindError(f"Failed to fetch Open-Meteo forecast: {exc}") from exc
+
+
+def fetch_wind_archive(
+    grid_points: list[tuple[float, float]],
+    date: str,
+    window_hours: int = DEFAULT_WIND_WINDOW_HOURS,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Execute a single multi-location Open-Meteo historical archive request.
+
+    Args:
+        grid_points: List of (lat, lon) coordinates to query.
+        date: Historical date formatted as YYYY-MM-DD.
+        window_hours: Requested forecast window (used to configure window).
+        timeout: Network request timeout in seconds.
+
+    Returns:
+        List of location dictionary responses from Open-Meteo archive API.
+
+    Raises:
+        ValueError: If grid_points is empty, date is missing, or exceeds max limit.
+        WindError: If network request or response parsing fails.
+    """
+    if not grid_points:
+        raise ValueError("grid_points cannot be empty.")
+
+    if not date or not date.strip():
+        raise ValueError("date is required for historical archive wind queries.")
+
+    if len(grid_points) > OPEN_METEO_MAX_LOCATIONS:
+        raise ValueError(
+            f"grid_points count ({len(grid_points)}) exceeds maximum allowed "
+            f"({OPEN_METEO_MAX_LOCATIONS})."
+        )
+
+    clean_date = date.strip()
+    lats = ",".join(str(p[0]) for p in grid_points)
+    lons = ",".join(str(p[1]) for p in grid_points)
+
+    params = {
+        "latitude": lats,
+        "longitude": lons,
+        "hourly": "wind_speed_10m,wind_direction_10m",
+        "wind_speed_unit": "kmh",
+        "start_date": clean_date,
+        "end_date": clean_date,
+    }
+    url = f"{OPEN_METEO_ARCHIVE_URL}?{urllib.parse.urlencode(params)}"
+
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "DownWind/1.0 (+https://github.com/harshsingh2275/DownWind)"},
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw_bytes: bytes = resp.read()
+            data = json.loads(raw_bytes.decode("utf-8"))
+            if isinstance(data, dict):
+                return [data]
+            if isinstance(data, list):
+                return list(data)
+            raise WindError(f"Unexpected JSON response format: {type(data)}")
+    except urllib.error.HTTPError as exc:
+        raise WindError(f"Open-Meteo archive HTTP {exc.code} error: {exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise WindError(f"Open-Meteo archive network error: {exc.reason}") from exc
+    except Exception as exc:
+        raise WindError(f"Failed to fetch Open-Meteo archive wind: {exc}") from exc
+
+
+def fetch_wind_data(
+    grid_points: list[tuple[float, float]],
+    date: str | None = None,
+    window_hours: int = DEFAULT_WIND_WINDOW_HOURS,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """Fetch wind observations: forecast if date is None, archive if date is specified."""
+    if date:
+        return fetch_wind_archive(
+            grid_points=grid_points, date=date, window_hours=window_hours, timeout=timeout
+        )
+    return fetch_wind_forecast(grid_points=grid_points, window_hours=window_hours, timeout=timeout)
 
 
 def parse_wind_forecast(
