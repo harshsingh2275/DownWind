@@ -47,3 +47,25 @@ WIND_GRID_STEP_DEG: float = 0.5
 
 # Default hourly forecast window for wind evaluation
 DEFAULT_WIND_WINDOW_HOURS: int = 24
+
+# ==============================================================================
+# Severity Thresholds (Heuristic — UNVALIDATED; pending owner confirmation Q-10)
+# ==============================================================================
+# Severity is a two-axis classification: fire intensity (totalFrp, MW) and
+# proximity/urgency (minEtaHours, hours).
+#
+# Reasoning:
+#   HIGH:   FRP > 500 MW is a large, highly active fire cluster; ETA < 6 h means
+#           smoke could reach the city within a single morning/evening window.
+#           Punjab stubble fires routinely exceed 200 MW; 500 MW is the upper tier.
+#   MEDIUM: FRP > 150 MW is a moderate cluster (several simultaneous burns);
+#           ETA < 12 h covers same-day impact across most city distances.
+#   LOW:    Anything detected within the reach corridor but below MEDIUM thresholds.
+#
+# ⚠ These values are proposals — record as D-021.  Owner must confirm or adjust
+#   before production use (Q-10).  UI should label all severity as "Indicative".
+
+SEVERITY_HIGH_FRP: float = 500.0      # MW — minimum totalFrp for HIGH
+SEVERITY_HIGH_ETA_H: float = 6.0      # hours — maximum minEtaHours for HIGH
+SEVERITY_MEDIUM_FRP: float = 150.0    # MW — minimum totalFrp for MEDIUM
+SEVERITY_MEDIUM_ETA_H: float = 12.0   # hours — maximum minEtaHours for MEDIUM
