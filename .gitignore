@@ -1,0 +1,37 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Python / Backend
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.venv/
+env/
+venv/
+
+# AWS SAM & Cloud
+.aws-sam/
+
+# Operating Systems
+.DS_Store
+Thumbs.db
+
+# Agent working files & local docs
+agents.md
+task.md
+docs/
+

@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #FAF8F5;
+  --surface: #F3F0EB;
+  --text: #1C1917;
+  --text-muted: #57534E;
+  --divider: #E5E1DA;
+  --hover: #F0ECE6;
+  --accent: #B3411B;
+  --accent-hover: #9A3716;
+  --accent-mid: #C8643C;
+  --neutral-low: #78716C;
+  --focus: #1C1917;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  margin: 0;
+  font-family: 'Public Sans', system-ui, sans-serif;
+}
+
+* {
+  border-radius: 0px !important;
+}
