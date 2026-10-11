@@ -66,6 +66,13 @@ Parameters:
       Number of days before DynamoDB items expire via TTL.
       Lambda must write a numeric `ttl` attribute (Unix epoch seconds).
 
+  FrontendOrigin:
+    Type: String
+    Default: "*"
+    Description: >
+      Allowed CORS origin for the HTTP API. Restrict to the Amplify app URL
+      (e.g. https://main.dXXXXXXXXX.amplifyapp.com) in T-074.
+
 # ---------------------------------------------------------------------------
 # Globals — shared Lambda settings
 # ---------------------------------------------------------------------------
@@ -87,6 +94,7 @@ Globals:
         FIRMS_KEY_PARAMETER_NAME: !Ref FirmsKeyParameterName
         DYNAMO_TTL_DAYS: !Ref DynamoTtlDays
         CITY_TOPIC_PREFIX: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:downwind-city-
+        ALLOWED_ORIGIN: !Ref FrontendOrigin
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -584,10 +592,9 @@ Resources:
           ThrottlingBurstLimit: !Ref SubscribeThrottlingBurstLimit
           ThrottlingRateLimit: !Ref SubscribeThrottlingRateLimit
       CorsConfiguration:
-        # CORS origin locked to the Amplify frontend URL in T-074.
-        # Wildcard used here as a safe placeholder until Amplify URL is known.
+        # CORS origin locked to the Amplify frontend URL in T-074 via FrontendOrigin parameter.
         AllowOrigins:
-          - "*"
+          - !Ref FrontendOrigin
         AllowMethods:
           - GET
           - POST

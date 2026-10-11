@@ -85,11 +85,12 @@ def _json_response(
     cache_control: str = CACHE_DYNAMIC_HEADER,
 ) -> dict[str, Any]:
     """Build a standard HTTP API Gateway 2.0 response."""
+    allowed_origin = os.environ.get("ALLOWED_ORIGIN", "*")
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Origin": allowed_origin,
             "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
             "Cache-Control": cache_control,
@@ -596,10 +597,11 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
 
     # 2. CORS preflight
     if method == "OPTIONS":
+        allowed_origin = os.environ.get("ALLOWED_ORIGIN", "*")
         return {
             "statusCode": 204,
             "headers": {
-                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Origin": allowed_origin,
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type, Authorization",
                 # Do NOT cache CORS preflight; stale CORS config can silently break
