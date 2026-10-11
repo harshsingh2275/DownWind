@@ -1,0 +1,5 @@
+# DownWind backend Lambda dependencies
+# Per D-002: only Python stdlib is used for HTTP calls (urllib).
+# No third-party packages are required at this time.
+# boto3 and botocore are provided by the Lambda runtime — do NOT list them here
+# (they are excluded from the deployment package to keep it small).

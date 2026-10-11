@@ -1,0 +1,460 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  DownWind — crop-residue fire tracking and smoke-path alerting service.
+  Ingest Lambda fetches NASA FIRMS data, runs the impact engine, and writes
+  to DynamoDB. API Lambda serves the HTTP API consumed by the React frontend.
+  No secret values are stored in this template; the FIRMS key lives in SSM.
+
+# ---------------------------------------------------------------------------
+# Parameters — all safe to version-control (no secret values)
+# ---------------------------------------------------------------------------
+Parameters:
+
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+    Description: Deployment environment tag applied to every resource.
+
+  IngestScheduleExpression:
+    Type: String
+    Default: rate(30 minutes)
+    Description: >
+      EventBridge schedule expression for the ingest Lambda.
+      Change to e.g. "rate(60 minutes)" without a code deploy.
+
+  FirmsKeyParameterName:
+    Type: String
+    Default: /downwind/firms-map-key
+    Description: >
+      SSM Parameter Store path for the NASA FIRMS MAP_KEY (SecureString).
+      Must be created manually before first deploy (M-06 in docs/manual-actions.md).
+      This value is a parameter *name*, not the secret value itself.
+
+  OpsAlertEmail:
+    Type: String
+    Default: ops-placeholder@example.com
+    Description: >
+      Email address for operational CloudWatch alarms (ingest errors, API 5xx).
+      Replace with your real ops email before deploy. This is not a secret.
+
+  ApiThrottlingBurstLimit:
+    Type: Number
+    Default: 100
+    Description: HTTP API per-route throttling burst limit (requests).
+
+  ApiThrottlingRateLimit:
+    Type: Number
+    Default: 50
+    Description: HTTP API per-route throttling steady-state rate (requests/sec).
+
+  DynamoTtlDays:
+    Type: Number
+    Default: 7
+    Description: >
+      Number of days before DynamoDB items expire via TTL.
+      Lambda must write a numeric `ttl` attribute (Unix epoch seconds).
+
+# ---------------------------------------------------------------------------
+# Globals — shared Lambda settings
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: python3.12
+    Handler: handler.lambda_handler
+    Timeout: 120
+    MemorySize: 256
+    Architectures:
+      - arm64
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        CLUSTERS_TABLE: !Ref ClustersTable
+        IMPACT_TABLE: !Ref ImpactTable
+        GEOCACHE_TABLE: !Ref GeoCacheTable
+        OPS_TOPIC_ARN: !Ref OpsSnsTopic
+        FIRMS_KEY_PARAMETER_NAME: !Ref FirmsKeyParameterName
+        DYNAMO_TTL_DAYS: !Ref DynamoTtlDays
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # ─── DynamoDB Tables ──────────────────────────────────────────────────────
+
+  ClustersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub downwind-clusters-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false  # Cost saving; data reconstructible from FIRMS
+      AttributeDefinitions:
+        - AttributeName: day
+          AttributeType: S
+        - AttributeName: clusterId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: day
+          KeyType: HASH
+        - AttributeName: clusterId
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+
+  ImpactTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub downwind-impact-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      AttributeDefinitions:
+        - AttributeName: day
+          AttributeType: S
+        - AttributeName: cityId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: day
+          KeyType: HASH
+        - AttributeName: cityId
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+
+  GeoCacheTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub downwind-geocache-${Environment}
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+      AttributeDefinitions:
+        - AttributeName: geoKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: geoKey
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+
+  # ─── SNS: Ops Alarm Topic ─────────────────────────────────────────────────
+
+  OpsSnsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-ops-${Environment}
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref OpsAlertEmail
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+
+  # ─── Lambda: IngestFunction ───────────────────────────────────────────────
+
+  IngestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub downwind-ingest-${Environment}
+      CodeUri: backend/
+      Description: >
+        Fetches NASA FIRMS fire detections, runs the impact engine, and writes
+        cluster + impact records to DynamoDB. Publishes SNS alerts for high-severity
+        cities that have passed the alert cooldown window.
+      Events:
+        ScheduledIngest:
+          Type: Schedule
+          Properties:
+            Schedule: !Ref IngestScheduleExpression
+            Name: !Sub downwind-ingest-schedule-${Environment}
+            Description: Triggers the ingest pipeline on a configurable cadence.
+            Enabled: true
+      Policies:
+        # SSM: read the FIRMS key — scoped to the exact parameter path only
+        - Statement:
+            Effect: Allow
+            Action:
+              - ssm:GetParameter
+            Resource:
+              - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${FirmsKeyParameterName}
+        # KMS: decrypt the SSM SecureString (managed key for SSM)
+        - Statement:
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+            Resource:
+              - !Sub arn:${AWS::Partition}:kms:${AWS::Region}:${AWS::AccountId}:alias/aws/ssm
+        # DynamoDB: Clusters table — read + write (idempotent puts)
+        - Statement:
+            Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:BatchWriteItem
+            Resource:
+              - !GetAtt ClustersTable.Arn
+        # DynamoDB: Impact table — read + write
+        - Statement:
+            Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+              - dynamodb:Query
+              - dynamodb:BatchWriteItem
+            Resource:
+              - !GetAtt ImpactTable.Arn
+        # SNS: publish to ops topic (alarm forwarding + alert publish)
+        - Statement:
+            Effect: Allow
+            Action:
+              - sns:Publish
+            Resource:
+              - !Ref OpsSnsTopic
+        # SNS: publish to per-city alert topics
+        # Per-city topics are created by ApiFunction at subscribe time and follow
+        # a deterministic ARN pattern. IngestFunction only publishes, never creates.
+        - Statement:
+            Effect: Allow
+            Action:
+              - sns:Publish
+            Resource:
+              - !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:downwind-city-*
+      Tags:
+        Environment: !Ref Environment
+        Project: downwind
+
+  IngestFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/downwind-ingest-${Environment}
+      RetentionInDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ─── Lambda: ApiFunction ──────────────────────────────────────────────────
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub downwind-api-${Environment}
+      CodeUri: backend/
+      Description: >
+        Handles all HTTP API routes: city list, clusters, impact, advisory,
+        report, and email subscription (SNS per-city topic creation + subscribe).
+      Events:
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /
+            Method: GET
+      Policies:
+        # DynamoDB: Clusters table — read-only
+        - Statement:
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource:
+              - !GetAtt ClustersTable.Arn
+        # DynamoDB: Impact table — read-only
+        - Statement:
+            Effect: Allow
+            Action:
+              - dynamodb:GetItem
+              - dynamodb:Query
+              - dynamodb:Scan
+            Resource:
+              - !GetAtt ImpactTable.Arn
+        # DynamoDB: GeoCache table — read + write (cache population)
+        - Statement:
+            Effect: Allow
+            Action:
+              - dynamodb:PutItem
+              - dynamodb:GetItem
+              - dynamodb:UpdateItem
+            Resource:
+              - !GetAtt GeoCacheTable.Arn
+        # SNS: create per-city topics and manage email subscriptions
+        - Statement:
+            Effect: Allow
+            Action:
+              - sns:CreateTopic
+              - sns:Subscribe
+              - sns:Unsubscribe
+              - sns:ListSubscriptionsByTopic
+              - sns:GetTopicAttributes
+            Resource:
+              - !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:downwind-city-*
+      Tags:
+        Environment: !Ref Environment
+        Project: downwind
+
+  ApiFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/downwind-api-${Environment}
+      RetentionInDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ─── HTTP API (API Gateway v2) ─────────────────────────────────────────────
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Environment
+      Description: DownWind public HTTP API — serves fire cluster and impact data to the React frontend.
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: !Ref ApiThrottlingBurstLimit
+        ThrottlingRateLimit: !Ref ApiThrottlingRateLimit
+      CorsConfiguration:
+        # CORS origin locked to the Amplify frontend URL in T-074.
+        # Wildcard used here as a safe placeholder until Amplify URL is known.
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - Content-Type
+          - X-Requested-With
+        MaxAge: 300
+      Tags:
+        Environment: !Ref Environment
+        Project: downwind
+
+  HttpApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/downwind-http-${Environment}
+      RetentionInDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ─── CloudWatch Alarms ────────────────────────────────────────────────────
+
+  IngestErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub downwind-ingest-errors-${Environment}
+      AlarmDescription: >
+        Fires when IngestFunction reports any errors in a single evaluation period.
+        Alerts the ops SNS topic -> owner email.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref IngestFunction
+      Statistic: Sum
+      Period: 300        # 5-minute evaluation window
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsSnsTopic
+      OKActions:
+        - !Ref OpsSnsTopic
+
+  Api5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub downwind-api-5xx-${Environment}
+      AlarmDescription: >
+        Fires when the HTTP API returns 5xx responses in a single evaluation period.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xxError
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: !Ref Environment
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref OpsSnsTopic
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  ApiBaseUrl:
+    Description: >
+      Base URL of the deployed HTTP API. Set VITE_API_BASE_URL to this value
+      in the Amplify Console environment variables (see docs/manual-actions.md M-13).
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}
+    Export:
+      Name: !Sub downwind-api-url-${Environment}
+
+  IngestFunctionArn:
+    Description: ARN of the IngestFunction Lambda (use for sam remote invoke / aws lambda invoke).
+    Value: !GetAtt IngestFunction.Arn
+    Export:
+      Name: !Sub downwind-ingest-arn-${Environment}
+
+  ClustersTableName:
+    Description: DynamoDB Clusters table name.
+    Value: !Ref ClustersTable
+    Export:
+      Name: !Sub downwind-clusters-table-${Environment}
+
+  ImpactTableName:
+    Description: DynamoDB Impact table name.
+    Value: !Ref ImpactTable
+    Export:
+      Name: !Sub downwind-impact-table-${Environment}
+
+  GeoCacheTableName:
+    Description: DynamoDB GeoCache table name.
+    Value: !Ref GeoCacheTable
+    Export:
+      Name: !Sub downwind-geocache-table-${Environment}
+
+  OpsTopicArn:
+    Description: ARN of the SNS ops alarm topic.
+    Value: !Ref OpsSnsTopic
+    Export:
+      Name: !Sub downwind-ops-topic-${Environment}

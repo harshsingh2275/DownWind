@@ -1,0 +1,37 @@
+# samconfig.toml — SAM CLI deploy defaults for DownWind.
+# Safe to version-control: contains no secret values.
+# Secret values (FIRMS key) live in SSM Parameter Store (see docs/manual-actions.md M-06).
+# Run: sam deploy (uses these defaults) or sam deploy --guided (interactive override).
+
+version = 0.1
+
+[default]
+[default.global.parameters]
+stack_name = "downwind-prod"
+region     = "ap-south-1"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+stack_name        = "downwind-prod"
+region            = "ap-south-1"
+capabilities      = "CAPABILITY_IAM CAPABILITY_NAMED_IAM"
+confirm_changeset = true
+resolve_s3        = true
+# parameter_overrides are listed here so the deployer knows what to set.
+# Values that differ from the template defaults must be supplied on the CLI:
+#   sam deploy --parameter-overrides OpsAlertEmail=your@email.com
+# Do NOT set FirmsKeyParameterName to the actual secret — only the SSM path.
+parameter_overrides = [
+  "Environment=prod",
+  "IngestScheduleExpression=rate(30 minutes)",
+  "FirmsKeyParameterName=/downwind/firms-map-key",
+  "DynamoTtlDays=7",
+  "ApiThrottlingBurstLimit=100",
+  "ApiThrottlingRateLimit=50"
+]
