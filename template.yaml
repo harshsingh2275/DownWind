@@ -49,6 +49,16 @@ Parameters:
     Default: 50
     Description: HTTP API per-route throttling steady-state rate (requests/sec).
 
+  SubscribeThrottlingBurstLimit:
+    Type: Number
+    Default: 10
+    Description: HTTP API POST /subscribe burst limit (requests).
+
+  SubscribeThrottlingRateLimit:
+    Type: Number
+    Default: 5
+    Description: HTTP API POST /subscribe steady-state rate limit (requests/sec).
+
   DynamoTtlDays:
     Type: Number
     Default: 7
@@ -76,6 +86,7 @@ Globals:
         OPS_TOPIC_ARN: !Ref OpsSnsTopic
         FIRMS_KEY_PARAMETER_NAME: !Ref FirmsKeyParameterName
         DYNAMO_TTL_DAYS: !Ref DynamoTtlDays
+        CITY_TOPIC_PREFIX: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:downwind-city-
 
 # ---------------------------------------------------------------------------
 # Resources
@@ -173,6 +184,203 @@ Resources:
         - Key: Project
           Value: downwind
 
+  # ─── SNS: Per-City Alert Topics (15 starter cities) ───────────────────────
+
+  CitySnsTopicDelhi:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-delhi-${Environment}
+      DisplayName: !Sub DownWind Alerts - Delhi (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: delhi
+
+  CitySnsTopicGurugram:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-gurugram-${Environment}
+      DisplayName: !Sub DownWind Alerts - Gurugram (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: gurugram
+
+  CitySnsTopicNoida:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-noida-${Environment}
+      DisplayName: !Sub DownWind Alerts - Noida (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: noida
+
+  CitySnsTopicGhaziabad:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-ghaziabad-${Environment}
+      DisplayName: !Sub DownWind Alerts - Ghaziabad (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: ghaziabad
+
+  CitySnsTopicFaridabad:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-faridabad-${Environment}
+      DisplayName: !Sub DownWind Alerts - Faridabad (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: faridabad
+
+  CitySnsTopicChandigarh:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-chandigarh-${Environment}
+      DisplayName: !Sub DownWind Alerts - Chandigarh (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: chandigarh
+
+  CitySnsTopicLudhiana:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-ludhiana-${Environment}
+      DisplayName: !Sub DownWind Alerts - Ludhiana (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: ludhiana
+
+  CitySnsTopicAmritsar:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-amritsar-${Environment}
+      DisplayName: !Sub DownWind Alerts - Amritsar (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: amritsar
+
+  CitySnsTopicPatiala:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-patiala-${Environment}
+      DisplayName: !Sub DownWind Alerts - Patiala (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: patiala
+
+  CitySnsTopicJalandhar:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-jalandhar-${Environment}
+      DisplayName: !Sub DownWind Alerts - Jalandhar (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: jalandhar
+
+  CitySnsTopicKarnal:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-karnal-${Environment}
+      DisplayName: !Sub DownWind Alerts - Karnal (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: karnal
+
+  CitySnsTopicPanipat:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-panipat-${Environment}
+      DisplayName: !Sub DownWind Alerts - Panipat (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: panipat
+
+  CitySnsTopicAmbala:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-ambala-${Environment}
+      DisplayName: !Sub DownWind Alerts - Ambala (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: ambala
+
+  CitySnsTopicRohtak:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-rohtak-${Environment}
+      DisplayName: !Sub DownWind Alerts - Rohtak (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: rohtak
+
+  CitySnsTopicHisar:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub downwind-city-hisar-${Environment}
+      DisplayName: !Sub DownWind Alerts - Hisar (${Environment})
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: downwind
+        - Key: CityId
+          Value: hisar
+
   # ─── Lambda: IngestFunction ───────────────────────────────────────────────
 
   IngestFunction:
@@ -269,6 +477,12 @@ Resources:
         Handles all HTTP API routes: city list, clusters, impact, advisory,
         report, and email subscription (SNS per-city topic creation + subscribe).
       Events:
+        ApiSubscribe:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /subscribe
+            Method: POST
         ApiProxy:
           Type: HttpApi
           Properties:
@@ -309,17 +523,27 @@ Resources:
               - dynamodb:UpdateItem
             Resource:
               - !GetAtt GeoCacheTable.Arn
-        # SNS: create per-city topics and manage email subscriptions
+        # SNS: manage email subscriptions for the 15 per-city alert topics (least privilege: sns:Subscribe only)
         - Statement:
             Effect: Allow
             Action:
-              - sns:CreateTopic
               - sns:Subscribe
-              - sns:Unsubscribe
-              - sns:ListSubscriptionsByTopic
-              - sns:GetTopicAttributes
             Resource:
-              - !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:downwind-city-*
+              - !Ref CitySnsTopicDelhi
+              - !Ref CitySnsTopicGurugram
+              - !Ref CitySnsTopicNoida
+              - !Ref CitySnsTopicGhaziabad
+              - !Ref CitySnsTopicFaridabad
+              - !Ref CitySnsTopicChandigarh
+              - !Ref CitySnsTopicLudhiana
+              - !Ref CitySnsTopicAmritsar
+              - !Ref CitySnsTopicPatiala
+              - !Ref CitySnsTopicJalandhar
+              - !Ref CitySnsTopicKarnal
+              - !Ref CitySnsTopicPanipat
+              - !Ref CitySnsTopicAmbala
+              - !Ref CitySnsTopicRohtak
+              - !Ref CitySnsTopicHisar
       Tags:
         Environment: !Ref Environment
         Project: downwind
@@ -343,6 +567,10 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: !Ref ApiThrottlingBurstLimit
         ThrottlingRateLimit: !Ref ApiThrottlingRateLimit
+      RouteSettings:
+        "POST /subscribe":
+          ThrottlingBurstLimit: !Ref SubscribeThrottlingBurstLimit
+          ThrottlingRateLimit: !Ref SubscribeThrottlingRateLimit
       CorsConfiguration:
         # CORS origin locked to the Amplify frontend URL in T-074.
         # Wildcard used here as a safe placeholder until Amplify URL is known.

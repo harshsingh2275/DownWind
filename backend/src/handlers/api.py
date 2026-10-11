@@ -29,6 +29,10 @@ from typing import Any
 IST_TIMEZONE: timezone = timezone(timedelta(hours=5, minutes=30))
 DATE_REGEX = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 WINDOW_REGEX = re.compile(r"^(\d+)(h|d)$")
+# RFC 5322 compliant practical email pattern
+EMAIL_REGEX = re.compile(
+    r"^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$"
+)
 
 # Cache headers
 CACHE_CITIES_HEADER = "public, max-age=300, s-maxage=300"
@@ -37,11 +41,12 @@ CACHE_NO_STORE_HEADER = "no-cache, no-store, must-revalidate"
 
 # Module-level caches
 _dynamo_resource: Any = None
+_sns_client: Any = None
 _cached_cities: list[dict[str, Any]] | None = None
 
 
 # ---------------------------------------------------------------------------
-# AWS SDK factory (lazy import per D-024)
+# AWS SDK factories (lazy import per D-024)
 # ---------------------------------------------------------------------------
 def _get_dynamo_resource() -> Any:
     global _dynamo_resource
@@ -49,6 +54,26 @@ def _get_dynamo_resource() -> Any:
         import boto3  # noqa: PLC0415 — lazy import for Lambda runtime only
         _dynamo_resource = boto3.resource("dynamodb")
     return _dynamo_resource
+
+
+def set_dynamo_resource(resource: Any) -> None:
+    """Set custom or mock DynamoDB resource for testing."""
+    global _dynamo_resource
+    _dynamo_resource = resource
+
+
+def _get_sns_client() -> Any:
+    global _sns_client
+    if _sns_client is None:
+        import boto3  # noqa: PLC0415 — lazy import for Lambda runtime only
+        _sns_client = boto3.client("sns")
+    return _sns_client
+
+
+def set_sns_client(client: Any) -> None:
+    """Set custom or mock SNS client for testing."""
+    global _sns_client
+    _sns_client = client
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +90,7 @@ def _json_response(
         "headers": {
             "Content-Type": "application/json",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
             "Cache-Control": cache_control,
         },
@@ -378,6 +403,177 @@ def handle_impact(query_params: dict[str, str] | None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Top-level Lambda Handler
 # ---------------------------------------------------------------------------
+# POST /subscribe Validation & Handler (T-036)
+# ---------------------------------------------------------------------------
+def validate_email_address(email: str) -> bool:
+    """Validate email address format strictly per RFC 5322 rules.
+
+    Checks:
+      - Total length <= 254 chars (RFC 5321 limit)
+      - Exactly one '@' separating local and domain
+      - Local part 1..64 chars, domain part 1..253 chars
+      - No leading/trailing/consecutive dots in local or domain
+      - Domain contains at least one dot
+      - Matches EMAIL_REGEX
+    """
+    if not email or len(email) > 254:
+        return False
+    if "@" not in email:
+        return False
+    parts = email.split("@")
+    if len(parts) != 2:
+        return False
+    local_part, domain_part = parts
+    if not local_part or len(local_part) > 64:
+        return False
+    if not domain_part or len(domain_part) > 253:
+        return False
+    if ".." in email:
+        return False
+    if local_part.startswith(".") or local_part.endswith("."):
+        return False
+    if domain_part.startswith(".") or domain_part.endswith("."):
+        return False
+    if "." not in domain_part:
+        return False
+    return bool(EMAIL_REGEX.match(email))
+
+
+def get_allowed_city_ids() -> set[str]:
+    """Return set of valid city IDs from the configured starter cities."""
+    cities = _load_cities()
+    return {c["id"].lower() for c in cities if "id" in c}
+
+
+def get_city_topic_arn(city_id: str) -> str:
+    """Derive the SNS topic ARN for a given city ID.
+
+    Format: {CITY_TOPIC_PREFIX}{city_id}-{ENVIRONMENT}
+    Matches the naming in template.yaml: downwind-city-{city_id}-{env}.
+    """
+    env = os.environ.get("ENVIRONMENT", "prod")
+    prefix = os.environ.get("CITY_TOPIC_PREFIX")
+    if prefix:
+        return f"{prefix}{city_id}-{env}"
+
+    region = os.environ.get("AWS_REGION", "ap-south-1")
+    account_id = os.environ.get("AWS_ACCOUNT_ID", "694442891430")
+    return f"arn:aws:sns:{region}:{account_id}:downwind-city-{city_id}-{env}"
+
+
+def handle_subscribe(event: dict[str, Any]) -> dict[str, Any]:
+    """Handle POST /subscribe requests per architecture.md §5 and T-036.
+
+    Contract:
+      - Payload: {"email": "...", "cityId": "..."}
+      - Validates body is a non-empty JSON object
+      - Validates email format strictly
+      - Validates cityId against the starter 15 cities allow-list
+      - Initiates SNS email double opt-in subscription
+      - Returns uniform HTTP 202 Accepted response for all valid inputs
+        to prevent email enumeration.
+    """
+    body_raw = event.get("body")
+    if not body_raw:
+        return _error_response(400, "BAD_REQUEST", "Request body is required.")
+
+    if event.get("isBase64Encoded"):
+        import base64
+
+        try:
+            body_raw = base64.b64decode(body_raw).decode("utf-8")
+        except Exception:
+            return _error_response(
+                400, "BAD_REQUEST", "Failed to decode base64 request body."
+            )
+
+    try:
+        data = json.loads(body_raw)
+    except (json.JSONDecodeError, TypeError):
+        return _error_response(400, "BAD_REQUEST", "Invalid JSON in request body.")
+
+    if not isinstance(data, dict):
+        return _error_response(
+            400, "BAD_REQUEST", "Request body must be a JSON object."
+        )
+
+    email_raw = data.get("email")
+    city_id_raw = data.get("cityId")
+
+    if not isinstance(email_raw, str) or not isinstance(city_id_raw, str):
+        return _error_response(
+            400, "BAD_REQUEST", "Fields 'email' and 'cityId' must be strings."
+        )
+
+    email = email_raw.strip().lower()
+    city_id = city_id_raw.strip().lower()
+
+    if not email:
+        return _error_response(400, "BAD_REQUEST", "Field 'email' cannot be empty.")
+
+    if not validate_email_address(email):
+        return _error_response(400, "BAD_REQUEST", "Invalid email address format.")
+
+    allowed_cities = get_allowed_city_ids()
+    if city_id not in allowed_cities:
+        allowed_sorted = ", ".join(sorted(allowed_cities))
+        return _error_response(
+            400,
+            "BAD_REQUEST",
+            f"Invalid cityId '{city_id}'. Allowed cities: {allowed_sorted}.",
+        )
+
+    topic_arn = get_city_topic_arn(city_id)
+
+    # Call SNS subscribe
+    try:
+        sns = _get_sns_client()
+        sns.subscribe(
+            TopicArn=topic_arn,
+            Protocol="email",
+            Endpoint=email,
+            ReturnSubscriptionArn=True,
+        )
+    except Exception as exc:
+        masked_email = (
+            email[:2] + "***@" + email.split("@")[-1] if "@" in email else "***"
+        )
+        print(
+            json.dumps(
+                {
+                    "level": "ERROR",
+                    "message": "Failed to subscribe email to SNS topic",
+                    "cityId": city_id,
+                    "topicArn": topic_arn,
+                    "maskedEmail": masked_email,
+                    "error": str(exc),
+                }
+            )
+        )
+        return _error_response(
+            500,
+            "INTERNAL_ERROR",
+            "An error occurred while processing the subscription. Please try again later.",
+        )
+
+    # Uniform 202 Accepted response for all valid inputs (prevents email enumeration)
+    return _json_response(
+        status_code=202,
+        body={
+            "status": "accepted",
+            "message": (
+                "If the email address is valid, a confirmation link has been sent. "
+                "Please check your inbox (and spam folder) to confirm subscription."
+            ),
+            "cityId": city_id,
+        },
+        cache_control=CACHE_NO_STORE_HEADER,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Top-level Lambda handler
+# ---------------------------------------------------------------------------
 def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     """API Gateway HTTP API top-level entry point."""
     # 1. Resolve HTTP method
@@ -394,7 +590,7 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
             "statusCode": 204,
             "headers": {
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type, Authorization",
                 "Cache-Control": CACHE_CITIES_HEADER,
             },
@@ -423,27 +619,34 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     query_params: dict[str, str] = event.get("queryStringParameters") or {}
 
     # 4. Route dispatch
-    if method != "GET":
+    if clean_path == "/subscribe":
+        if method == "POST":
+            return handle_subscribe(event)
         return _error_response(
-            405, "METHOD_NOT_ALLOWED", f"HTTP method '{method}' is not allowed."
+            405, "METHOD_NOT_ALLOWED", f"HTTP method '{method}' is not allowed for /subscribe."
         )
 
-    if clean_path == "/cities":
-        return handle_cities()
-    if clean_path == "/clusters":
-        return handle_clusters(query_params)
-    if clean_path == "/impact":
-        return handle_impact(query_params)
-    if clean_path in ("/", ""):
+    if clean_path in ("/cities", "/clusters", "/impact", "/"):
+        if method != "GET":
+            return _error_response(
+                405, "METHOD_NOT_ALLOWED", f"HTTP method '{method}' is not allowed."
+            )
+        if clean_path == "/cities":
+            return handle_cities()
+        if clean_path == "/clusters":
+            return handle_clusters(query_params)
+        if clean_path == "/impact":
+            return handle_impact(query_params)
         return _json_response(
             200,
             {
                 "service": "DownWind API",
                 "version": "1.0",
-                "endpoints": ["/cities", "/clusters", "/impact"],
+                "endpoints": ["/cities", "/clusters", "/impact", "/subscribe"],
             },
         )
 
     return _error_response(
         404, "NOT_FOUND", f"Route '{clean_path}' not found."
     )
+

@@ -361,3 +361,210 @@ class TestRoutingAndErrors:
         assert res["statusCode"] == 204
         assert res["headers"]["Access-Control-Allow-Origin"] == "*"
         assert "GET" in res["headers"]["Access-Control-Allow-Methods"]
+        assert "POST" in res["headers"]["Access-Control-Allow-Methods"]
+
+
+# ---------------------------------------------------------------------------
+# POST /subscribe Endpoint Tests (T-036)
+# ---------------------------------------------------------------------------
+class TestSubscribeEndpoint:
+    @pytest.fixture(autouse=True)
+    def setup_sns_mock(self) -> None:
+        """[MOCK] Injected mock SNS client for isolated unit testing."""
+        self.mock_sns = MagicMock()
+        self.mock_sns.subscribe.return_value = {
+            "SubscriptionArn": "pending confirmation"
+        }
+        api.set_sns_client(self.mock_sns)
+
+    def test_subscribe_success(self) -> None:
+        """Valid subscription returns 202 Accepted and calls SNS Subscribe."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps({"email": "User.Name+Test@Example.Com", "cityId": "Delhi"}),
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 202
+        body = json.loads(res["body"])
+        assert body["status"] == "accepted"
+        assert body["cityId"] == "delhi"
+        assert "confirmation link" in body["message"]
+
+        # Verify SNS subscribe was invoked with normalized email and correct topic ARN
+        self.mock_sns.subscribe.assert_called_once()
+        call_kwargs = self.mock_sns.subscribe.call_args.kwargs
+        assert call_kwargs["Protocol"] == "email"
+        assert call_kwargs["Endpoint"] == "user.name+test@example.com"
+        assert call_kwargs["TopicArn"].endswith("downwind-city-delhi-prod")
+        assert res["headers"]["Cache-Control"] == "no-cache, no-store, must-revalidate"
+        assert res["headers"]["Access-Control-Allow-Origin"] == "*"
+
+    def test_subscribe_uniform_response_duplicate(self) -> None:
+        """Duplicate subscription returns the exact same 202 response (enumeration prevention)."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps({"email": "resident@delhi.gov.in", "cityId": "delhi"}),
+        }
+        res1 = api.lambda_handler(event, None)
+        res2 = api.lambda_handler(event, None)
+        assert res1["statusCode"] == 202
+        assert res2["statusCode"] == 202
+        assert json.loads(res1["body"]) == json.loads(res2["body"])
+
+    def test_subscribe_missing_body(self) -> None:
+        """Missing request body returns 400 Bad Request."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": None,
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 400
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "BAD_REQUEST"
+
+    def test_subscribe_invalid_json(self) -> None:
+        """Malformed JSON returns 400 Bad Request."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": "{malformed_json: true,",
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 400
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "BAD_REQUEST"
+
+    def test_subscribe_body_not_dict(self) -> None:
+        """JSON array instead of object returns 400 Bad Request."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps(["user@example.com", "delhi"]),
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 400
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "BAD_REQUEST"
+
+    @pytest.mark.parametrize(
+        "invalid_payload",
+        [
+            {"email": 12345, "cityId": "delhi"},
+            {"email": "user@example.com", "cityId": 123},
+            {"cityId": "delhi"},
+            {"email": "user@example.com"},
+            {"email": "", "cityId": "delhi"},
+            {"email": "   ", "cityId": "delhi"},
+        ],
+    )
+    def test_subscribe_invalid_fields(self, invalid_payload: dict[str, Any]) -> None:
+        """Missing or non-string fields return 400 Bad Request."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps(invalid_payload),
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 400
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "BAD_REQUEST"
+
+    @pytest.mark.parametrize(
+        "bad_email",
+        [
+            "not-an-email",
+            "@missinguser.com",
+            "user@.com",
+            "user@domain..com",
+            "user..name@domain.com",
+            "user name@domain.com",
+            "user@localhost",
+            "user@" + "a" * 260 + ".com",
+        ],
+    )
+    def test_subscribe_invalid_email_format(self, bad_email: str) -> None:
+        """Invalid email formats return 400 Bad Request."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps({"email": bad_email, "cityId": "delhi"}),
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 400
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "BAD_REQUEST"
+        assert "Invalid email address format" in body["error"]["message"]
+
+    def test_subscribe_invalid_city_id(self) -> None:
+        """CityId not in allow-list returns 400 Bad Request."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps({"email": "user@example.com", "cityId": "mumbai"}),
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 400
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "BAD_REQUEST"
+        assert "Allowed cities" in body["error"]["message"]
+
+    def test_subscribe_base64_encoded(self) -> None:
+        """Base64-encoded body decodes properly."""
+        import base64
+
+        raw = json.dumps({"email": "b64user@example.com", "cityId": "gurugram"}).encode()
+        b64 = base64.b64encode(raw).decode()
+        event = {
+            "rawPath": "/subscribe",
+            "isBase64Encoded": True,
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": b64,
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 202
+        body = json.loads(res["body"])
+        assert body["cityId"] == "gurugram"
+
+    def test_subscribe_method_not_allowed(self) -> None:
+        """GET /subscribe returns 405 Method Not Allowed."""
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "GET", "path": "/subscribe"}},
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 405
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "METHOD_NOT_ALLOWED"
+
+    def test_subscribe_sns_internal_error(self) -> None:
+        """SNS client failure returns 500 Internal Error without leaking details."""
+        self.mock_sns.subscribe.side_effect = RuntimeError("SNS throttled or unreachable")
+        event = {
+            "rawPath": "/subscribe",
+            "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+            "body": json.dumps({"email": "user@example.com", "cityId": "chandigarh"}),
+        }
+        res = api.lambda_handler(event, None)
+        assert res["statusCode"] == 500
+        body = json.loads(res["body"])
+        assert body["error"]["code"] == "INTERNAL_ERROR"
+
+    def test_subscribe_all_15_cities(self) -> None:
+        """All 15 starter cities can be subscribed successfully."""
+        cities = api.get_allowed_city_ids()
+        assert len(cities) == 15
+        for city_id in cities:
+            self.mock_sns.reset_mock()
+            event = {
+                "rawPath": "/subscribe",
+                "requestContext": {"http": {"method": "POST", "path": "/subscribe"}},
+                "body": json.dumps({"email": "all@example.com", "cityId": city_id}),
+            }
+            res = api.lambda_handler(event, None)
+            assert res["statusCode"] == 202
+            call_kwargs = self.mock_sns.subscribe.call_args.kwargs
+            assert call_kwargs["TopicArn"].endswith(f"downwind-city-{city_id}-prod")
+
