@@ -8,6 +8,7 @@ import {
   getClusterMarkerSize,
   getClusterSeverity,
   createClusterDivIcon,
+  createArrowHeadDivIcon,
 } from './clusterMapUtils'
 import { SAMPLE_CLUSTERS } from '../fixtures/sampleClusters'
 
@@ -74,6 +75,16 @@ describe('ClusterMap Utilities', () => {
     it('applies marker-selected class when isSelected is true', () => {
       const icon = createClusterDivIcon(SAMPLE_CLUSTERS[0], true)
       expect(icon.options.html).toContain('marker-selected')
+    })
+  })
+
+  describe('createArrowHeadDivIcon', () => {
+    it('creates directional arrowhead icon labelled Estimated smoke direction', () => {
+      const arrowIcon = createArrowHeadDivIcon(135)
+      expect(arrowIcon.options.className).toBe('downwind-arrowhead-icon')
+      expect(arrowIcon.options.html).toContain('Estimated smoke direction 135°')
+      expect(arrowIcon.options.html).toContain('rotate(135deg)')
+      expect(arrowIcon.options.html).toContain('<svg')
     })
   })
 })

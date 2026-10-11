@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Marker, Popup, Polyline, Tooltip, useMap } from 'react-leaflet'
 import type { Cluster } from '../types/api'
 import {
   DEFAULT_TILE_URL,
@@ -10,7 +10,10 @@ import {
 import {
   getClusterSeverity,
   createClusterDivIcon,
+  createArrowHeadDivIcon,
 } from './clusterMapUtils'
+import { getSmokeBearing, calculateDestinationPoint } from '../utils/geo'
+
 
 /**
  * Pan controller component to pan map when a cluster is selected.
@@ -88,73 +91,129 @@ export function ClusterMap({
           const isSelected = cluster.clusterId === selectedClusterId
           const icon = createClusterDivIcon(cluster, isSelected)
           const severity = getClusterSeverity(cluster)
+          const smokeBearing = getSmokeBearing(cluster.windDirDeg)
+          const hasWind = cluster.windSpeedKmh >= 2.0
+          const distKm = Math.min(45, Math.max(20, cluster.windSpeedKmh * 2.5))
+          const [destLat, destLon] = hasWind
+            ? calculateDestinationPoint(cluster.lat, cluster.lon, distKm, smokeBearing)
+            : [cluster.lat, cluster.lon]
 
           return (
-            <Marker
-              key={cluster.clusterId}
-              position={[cluster.lat, cluster.lon]}
-              icon={icon}
-              eventHandlers={{
-                click: () => onSelectCluster?.(cluster.clusterId),
-              }}
-            >
-              <Popup>
-                <div className="space-y-2 py-1">
-                  <div className="flex items-center justify-between gap-3 border-b border-divider pb-1.5">
-                    <span className="font-mono text-[12px] font-semibold text-text uppercase">
-                      {cluster.clusterId}
-                    </span>
-                    <span
-                      className={`font-mono text-[11px] px-1.5 py-0.5 border ${
-                        severity === 'High'
-                          ? 'bg-accent text-white border-accent'
-                          : severity === 'Medium'
-                            ? 'bg-accent-mid text-white border-accent-mid'
-                            : 'bg-transparent text-neutral-low border-neutral-low'
-                      }`}
-                    >
-                      {severity} Severity
-                    </span>
-                  </div>
+            <div key={cluster.clusterId}>
+              {/* Directional Smoke Vector Line */}
+              {hasWind && (
+                <>
+                  <Polyline
+                    positions={[
+                      [cluster.lat, cluster.lon],
+                      [destLat, destLon],
+                    ]}
+                    pathOptions={{
+                      color: '#B3411B',
+                      weight: isSelected ? 3 : 2,
+                      opacity: isSelected ? 0.95 : 0.7,
+                      dashArray: isSelected ? undefined : '5, 5',
+                    }}
+                    eventHandlers={{
+                      click: () => onSelectCluster?.(cluster.clusterId),
+                    }}
+                  >
+                    <Tooltip sticky={true}>
+                      <span className="font-mono text-[11px] font-medium">
+                        Estimated smoke direction: {Math.round(smokeBearing)}°
+                      </span>
+                    </Tooltip>
+                  </Polyline>
 
-                  <div className="grid grid-cols-2 gap-2 text-[12px]">
-                    <div>
-                      <span className="text-text-muted block text-[11px]">Centroid</span>
-                      <span className="font-mono text-data text-text">
-                        {cluster.lat.toFixed(3)}, {cluster.lon.toFixed(3)}
+                  {/* Arrowhead Marker at Smoke Vector Tip */}
+                  <Marker
+                    position={[destLat, destLon]}
+                    icon={createArrowHeadDivIcon(smokeBearing)}
+                    interactive={true}
+                    eventHandlers={{
+                      click: () => onSelectCluster?.(cluster.clusterId),
+                    }}
+                  >
+                    <Tooltip direction="top" offset={[0, -6]}>
+                      <span className="font-mono text-[11px] font-medium">
+                        Estimated smoke direction ({Math.round(smokeBearing)}°)
                       </span>
-                    </div>
-                    <div>
-                      <span className="text-text-muted block text-[11px]">Total FRP</span>
-                      <span className="font-mono text-data text-text font-semibold">
-                        {cluster.totalFrp.toFixed(1)} MW
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-text-muted block text-[11px]">Fires Count</span>
-                      <span className="font-mono text-data text-text">
-                        {cluster.count} detections
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-text-muted block text-[11px]">Peak Single FRP</span>
-                      <span className="font-mono text-data text-text">
-                        {cluster.maxFrp.toFixed(1)} MW
-                      </span>
-                    </div>
-                  </div>
+                    </Tooltip>
+                  </Marker>
+                </>
+              )}
 
-                  <div className="border-t border-divider pt-1.5 text-[11px] text-text-muted flex justify-between items-center">
-                    <span>
-                      Wind: <strong className="font-mono text-text">{cluster.windSpeedKmh.toFixed(1)} km/h</strong> @ {Math.round(cluster.windDirDeg)}°
-                    </span>
-                    <span className="font-mono text-[10px]">
-                      Estimate
-                    </span>
+              {/* Fire Cluster Centroid Marker */}
+              <Marker
+                position={[cluster.lat, cluster.lon]}
+                icon={icon}
+                eventHandlers={{
+                  click: () => onSelectCluster?.(cluster.clusterId),
+                }}
+              >
+                <Popup>
+                  <div className="space-y-2 py-1">
+                    <div className="flex items-center justify-between gap-3 border-b border-divider pb-1.5">
+                      <span className="font-mono text-[12px] font-semibold text-text uppercase">
+                        {cluster.clusterId}
+                      </span>
+                      <span
+                        className={`font-mono text-[11px] px-1.5 py-0.5 border ${
+                          severity === 'High'
+                            ? 'bg-accent text-white border-accent'
+                            : severity === 'Medium'
+                              ? 'bg-accent-mid text-white border-accent-mid'
+                              : 'bg-transparent text-neutral-low border-neutral-low'
+                        }`}
+                      >
+                        {severity} Severity
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-[12px]">
+                      <div>
+                        <span className="text-text-muted block text-[11px]">Centroid</span>
+                        <span className="font-mono text-data text-text">
+                          {cluster.lat.toFixed(3)}, {cluster.lon.toFixed(3)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-text-muted block text-[11px]">Total FRP</span>
+                        <span className="font-mono text-data text-text font-semibold">
+                          {cluster.totalFrp.toFixed(1)} MW
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-text-muted block text-[11px]">Fires Count</span>
+                        <span className="font-mono text-data text-text">
+                          {cluster.count} detections
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-text-muted block text-[11px]">Peak Single FRP</span>
+                        <span className="font-mono text-data text-text">
+                          {cluster.maxFrp.toFixed(1)} MW
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-divider pt-1.5 text-[11px] text-text-muted flex justify-between items-center">
+                      <span>
+                        Wind: <strong className="font-mono text-text">{cluster.windSpeedKmh.toFixed(1)} km/h</strong> @ {Math.round(cluster.windDirDeg)}°
+                      </span>
+                      <span className="font-mono text-[10px]">
+                        Smoke: {Math.round(smokeBearing)}°
+                      </span>
+                    </div>
+
+                    <div className="border-t border-divider pt-1 text-[11px] text-accent font-medium flex items-center gap-1.5">
+                      <span className="w-2 h-2 inline-block bg-accent" />
+                      <span>Estimated smoke direction: {Math.round(smokeBearing)}°</span>
+                    </div>
                   </div>
-                </div>
-              </Popup>
-            </Marker>
+                </Popup>
+              </Marker>
+            </div>
           )
         })}
       </MapContainer>
