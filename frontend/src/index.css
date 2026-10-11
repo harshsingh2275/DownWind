@@ -1,8 +1,21 @@
+/* Self-hosted fonts per design.md §3 */
+@import '@fontsource/public-sans/400.css';
+@import '@fontsource/public-sans/500.css';
+@import '@fontsource/public-sans/600.css';
+@import '@fontsource/public-sans/700.css';
+
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+
+@import '@fontsource/noto-sans-devanagari/400.css';
+@import '@fontsource/noto-sans-devanagari/600.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
+  /* Colors (design.md §4) */
   --bg: #FAF8F5;
   --surface: #F3F0EB;
   --text: #1C1917;
@@ -11,18 +24,73 @@
   --hover: #F0ECE6;
   --accent: #B3411B;
   --accent-hover: #9A3716;
-  --accent-mid: #C8643C;
+  --accent-mid: #B54D26; /* Darkened from #C8643C to achieve 4.89:1 WCAG AA contrast against --bg */
   --neutral-low: #78716C;
   --focus: #1C1917;
+
+  /* Typography Fonts (design.md §3) */
+  --font-primary: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+  --font-hindi: 'Noto Sans Devanagari', 'Public Sans', sans-serif;
+
+  /* Spacing base unit 4px (design.md §5) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --space-32: 128px;
 }
 
+/* Force border-radius = 0px globally per design.md §2 */
+*,
+*::before,
+*::after {
+  border-radius: 0px !important;
+}
+
+/* Base element styles */
 body {
   background-color: var(--bg);
   color: var(--text);
+  font-family: var(--font-primary);
   margin: 0;
-  font-family: 'Public Sans', system-ui, sans-serif;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-* {
-  border-radius: 0px !important;
+/* Focus styles per design.md §6 */
+:focus-visible {
+  outline: 2px solid var(--focus) !important;
+  outline-offset: 2px !important;
+}
+
+/* Reduced motion per design.md §10 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Hindi typography adjustments per design.md §3 */
+:lang(hi),
+[lang="hi"] {
+  font-family: var(--font-hindi);
+  line-height: 1.6;
+}
+
+/* Data font utility */
+.font-data {
+  font-family: var(--font-mono);
+  font-weight: 500;
 }
