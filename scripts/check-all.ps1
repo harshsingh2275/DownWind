@@ -46,7 +46,7 @@ try {
 Write-Host "    Frontend checks PASSED!"
 
 Write-Host "`n--> 3. Running secrets scan..."
-bash "$RootDir/scripts/scan-secrets.sh"
+bash "scripts/scan-secrets.sh"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "`n=================================================="

@@ -10,6 +10,8 @@
 @import '@fontsource/noto-sans-devanagari/400.css';
 @import '@fontsource/noto-sans-devanagari/600.css';
 
+@import 'leaflet/dist/leaflet.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -94,3 +96,149 @@ body {
   font-family: var(--font-mono);
   font-weight: 500;
 }
+
+/* ==========================================================================
+   Leaflet Design Overrides per design.md §7 (0px radius, no shadow)
+   ========================================================================== */
+.leaflet-container {
+  font-family: var(--font-primary) !important;
+  background-color: var(--surface) !important;
+  border-radius: 0 !important;
+  outline: none;
+}
+
+/* Subtle tile desaturation per design.md §7 */
+.leaflet-tile {
+  filter: saturate(0.85) contrast(1.02);
+}
+
+/* Zoom controls: 0px radius, 1px border, no shadow, text '+' and '-' */
+.leaflet-control-zoom {
+  border-radius: 0 !important;
+  border: 1px solid var(--divider) !important;
+  box-shadow: none !important;
+  background: var(--surface) !important;
+}
+
+.leaflet-control-zoom a {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: none !important;
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+  font-family: var(--font-primary) !important;
+  font-weight: 600 !important;
+  font-size: 16px !important;
+  line-height: 30px !important;
+  width: 30px !important;
+  height: 30px !important;
+  transition: background-color 150ms ease;
+}
+
+.leaflet-control-zoom a:first-child {
+  border-bottom: 1px solid var(--divider) !important;
+}
+
+.leaflet-control-zoom a:hover,
+.leaflet-control-zoom a:focus-visible {
+  background-color: var(--hover) !important;
+  color: var(--accent) !important;
+}
+
+/* Attribution control: 0px radius, no shadow, strictly visible OSM credit */
+.leaflet-control-attribution {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: 1px solid var(--divider) !important;
+  background: rgba(250, 248, 245, 0.95) !important;
+  color: var(--text-muted) !important;
+  font-family: var(--font-primary) !important;
+  font-size: 11px !important;
+  padding: 3px 8px !important;
+}
+
+.leaflet-control-attribution a {
+  color: var(--text) !important;
+  text-decoration: underline !important;
+}
+
+.leaflet-control-attribution a:hover {
+  color: var(--accent) !important;
+}
+
+/* Popups: 0px radius, no shadow, 1px divider border */
+.leaflet-popup-content-wrapper {
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  border: 1px solid var(--divider) !important;
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+  padding: 0 !important;
+}
+
+.leaflet-popup-tip-container {
+  display: none !important; /* Flat architectural popups without rounded shadow pointer */
+}
+
+.leaflet-popup-content {
+  margin: 12px 16px !important;
+  line-height: 1.5 !important;
+  font-family: var(--font-primary) !important;
+  font-size: 13px !important;
+}
+
+.leaflet-popup-close-button {
+  border-radius: 0 !important;
+  color: var(--text-muted) !important;
+  font-family: var(--font-primary) !important;
+  font-size: 18px !important;
+  top: 6px !important;
+  right: 6px !important;
+  padding: 2px 6px !important;
+}
+
+.leaflet-popup-close-button:hover {
+  color: var(--accent) !important;
+  background-color: var(--hover) !important;
+}
+
+/* Custom Square divIcon Marker Styles */
+.downwind-div-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.downwind-square-marker {
+  box-sizing: border-box !important;
+  border-radius: 0px !important;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.downwind-square-marker.marker-severity-high {
+  background-color: var(--accent) !important;
+  border: 1px solid #78270E !important;
+}
+
+.downwind-square-marker.marker-severity-mid {
+  background-color: var(--accent-mid) !important;
+  border: 1px solid #7B3116 !important;
+}
+
+.downwind-square-marker.marker-severity-low {
+  background-color: var(--bg) !important;
+  border: 2px solid var(--neutral-low) !important;
+}
+
+.downwind-square-marker:hover,
+.downwind-square-marker:focus-visible {
+  outline: 2px solid var(--focus) !important;
+  outline-offset: 2px !important;
+  transform: scale(1.15);
+}
+
+.downwind-square-marker.marker-selected {
+  outline: 2px solid var(--focus) !important;
+  outline-offset: 3px !important;
+}
+

@@ -134,3 +134,11 @@ export async function subscribe(data: SubscribeRequest): Promise<SubscribeRespon
     body: JSON.stringify(data),
   })
 }
+
+export const apiClient = {
+  getCities,
+  getClusters,
+  getImpact,
+  subscribe,
+}
+
