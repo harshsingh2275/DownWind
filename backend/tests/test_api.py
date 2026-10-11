@@ -369,8 +369,18 @@ class TestRoutingAndErrors:
 # ---------------------------------------------------------------------------
 class TestSubscribeEndpoint:
     @pytest.fixture(autouse=True)
-    def setup_sns_mock(self) -> None:
-        """[MOCK] Injected mock SNS client for isolated unit testing."""
+    def setup_sns_mock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """[MOCK] Injected mock SNS client for isolated unit testing.
+
+        Sets CITY_TOPIC_PREFIX matching the SAM Globals pattern.
+        In production SAM always injects CITY_TOPIC_PREFIX; tests must mirror
+        that so the security fix (no hardcoded account ID fallback) works.
+        """
+        monkeypatch.setenv(
+            "CITY_TOPIC_PREFIX",
+            "arn:aws:sns:ap-south-1:123456789012:downwind-city-",
+        )
+        monkeypatch.setenv("ENVIRONMENT", "prod")
         self.mock_sns = MagicMock()
         self.mock_sns.subscribe.return_value = {
             "SubscriptionArn": "pending confirmation"

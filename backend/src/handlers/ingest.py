@@ -373,7 +373,16 @@ def _publish_city_alert(
         topic_arn = f"{prefix}{city_id}-{env}"
     else:
         region = region or os.environ.get("AWS_REGION", "ap-south-1")
-        account_id = account_id or os.environ.get("AWS_ACCOUNT_ID", "694442891430")
+        # account_id must come from the caller (extracted from ops_topic_arn ARN)
+        # or AWS_ACCOUNT_ID env var. Never hardcoded in source code.
+        account_id = account_id or os.environ.get("AWS_ACCOUNT_ID", "")
+        if not account_id:
+            _log(
+                "WARN",
+                "Cannot construct city topic ARN: no account_id available",
+                city_id=city_id,
+            )
+            return
         topic_arn = f"arn:aws:sns:{region}:{account_id}:downwind-city-{city_id}-{env}"
 
     site_url = os.environ.get("SITE_URL", "https://downwind.local")

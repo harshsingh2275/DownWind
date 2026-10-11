@@ -432,17 +432,22 @@ class TestAlertDispatchAndCooldown:
         )
         assert call_kwargs["ExpressionAttributeValues"][":now"] == now_iso
 
-        # Now test publish
-        mod._publish_city_alert(
-            city_id="delhi",
-            city_name="Delhi",
-            severity="High",
-            ist_day="2024-11-01",
-            n_clusters=15,
-            total_frp=650.0,
-            nearest_km=25.0,
-            min_eta_hours=2.5,
-        )
+        # Now test publish (set CITY_TOPIC_PREFIX as SAM Globals would inject in production)
+        import os
+        with patch.dict(os.environ, {
+            "CITY_TOPIC_PREFIX": "arn:aws:sns:ap-south-1:123456789012:downwind-city-",
+            "ENVIRONMENT": "prod",
+        }):
+            mod._publish_city_alert(
+                city_id="delhi",
+                city_name="Delhi",
+                severity="High",
+                ist_day="2024-11-01",
+                n_clusters=15,
+                total_frp=650.0,
+                nearest_km=25.0,
+                min_eta_hours=2.5,
+            )
         sns.publish.assert_called_once()
         publish_kwargs = sns.publish.call_args.kwargs
         assert publish_kwargs["TopicArn"].endswith("downwind-city-delhi-prod")
@@ -501,11 +506,20 @@ class TestAlertDispatchAndCooldown:
         assert claim1 is True
         assert claim2 is False
 
-        # If only claim1 publishes:
-        if claim1:
-            mod._publish_city_alert("delhi", "Delhi", "High", "2024-11-01", 10, 500.0, 30.0, 3.0)
-        if claim2:
-            mod._publish_city_alert("delhi", "Delhi", "High", "2024-11-01", 10, 500.0, 30.0, 3.0)
+        # If only claim1 publishes (set CITY_TOPIC_PREFIX as SAM Globals would inject)
+        import os
+        with patch.dict(os.environ, {
+            "CITY_TOPIC_PREFIX": "arn:aws:sns:ap-south-1:123456789012:downwind-city-",
+            "ENVIRONMENT": "prod",
+        }):
+            if claim1:
+                mod._publish_city_alert(
+                    "delhi", "Delhi", "High", "2024-11-01", 10, 500.0, 30.0, 3.0
+                )
+            if claim2:
+                mod._publish_city_alert(
+                    "delhi", "Delhi", "High", "2024-11-01", 10, 500.0, 30.0, 3.0
+                )
 
         # SNS publish was called exactly ONCE across the two runs
         assert sns.publish.call_count == 1

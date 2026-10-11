@@ -264,9 +264,9 @@ def handle_cities() -> dict[str, Any]:
             {"cities": cities, "total": len(cities)},
             cache_control=CACHE_CITIES_HEADER,
         )
-    except Exception as exc:
+    except Exception:
         return _error_response(
-            500, "INTERNAL_ERROR", f"Failed to load cities: {exc}"
+            500, "INTERNAL_ERROR", "Failed to load city data. Please try again later."
         )
 
 
@@ -329,9 +329,9 @@ def handle_clusters(query_params: dict[str, str] | None) -> dict[str, Any]:
                 "lastUpdatedUtc": last_updated,
             },
         )
-    except Exception as exc:
+    except Exception:
         return _error_response(
-            500, "INTERNAL_ERROR", f"Failed to retrieve clusters: {exc}"
+            500, "INTERNAL_ERROR", "Failed to retrieve cluster data. Please try again later."
         )
 
 
@@ -394,9 +394,9 @@ def handle_impact(query_params: dict[str, str] | None) -> dict[str, Any]:
                 "lastUpdatedUtc": last_updated,
             },
         )
-    except Exception as exc:
+    except Exception:
         return _error_response(
-            500, "INTERNAL_ERROR", f"Failed to retrieve impact: {exc}"
+            500, "INTERNAL_ERROR", "Failed to retrieve impact data. Please try again later."
         )
 
 
@@ -450,14 +450,24 @@ def get_city_topic_arn(city_id: str) -> str:
 
     Format: {CITY_TOPIC_PREFIX}{city_id}-{ENVIRONMENT}
     Matches the naming in template.yaml: downwind-city-{city_id}-{env}.
+
+    Prefers the CITY_TOPIC_PREFIX env var (set in SAM Globals). The
+    fallback constructs a partial ARN without the account ID to avoid
+    hardcoding the AWS account number in source code.
     """
     env = os.environ.get("ENVIRONMENT", "prod")
     prefix = os.environ.get("CITY_TOPIC_PREFIX")
     if prefix:
         return f"{prefix}{city_id}-{env}"
 
+    # CITY_TOPIC_PREFIX must be set in production. This fallback is only
+    # reached in misconfigured environments; it will fail at SNS call time.
     region = os.environ.get("AWS_REGION", "ap-south-1")
-    account_id = os.environ.get("AWS_ACCOUNT_ID", "694442891430")
+    account_id = os.environ.get("AWS_ACCOUNT_ID", "")
+    if not account_id:
+        raise RuntimeError(
+            "CITY_TOPIC_PREFIX or AWS_ACCOUNT_ID environment variable must be set."
+        )
     return f"arn:aws:sns:{region}:{account_id}:downwind-city-{city_id}-{env}"
 
 
@@ -592,7 +602,9 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
                 "Access-Control-Allow-Headers": "Content-Type, Authorization",
-                "Cache-Control": CACHE_CITIES_HEADER,
+                # Do NOT cache CORS preflight; stale CORS config can silently break
+                # clients after a policy change (e.g. T-074 origin lock).
+                "Cache-Control": CACHE_NO_STORE_HEADER,
             },
             "body": "",
         }
