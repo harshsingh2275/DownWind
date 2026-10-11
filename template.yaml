@@ -444,15 +444,27 @@ Resources:
               - sns:Publish
             Resource:
               - !Ref OpsSnsTopic
-        # SNS: publish to per-city alert topics
-        # Per-city topics are created by ApiFunction at subscribe time and follow
-        # a deterministic ARN pattern. IngestFunction only publishes, never creates.
+        # SNS: publish to per-city alert topics (least privilege: 15 specific topics)
         - Statement:
             Effect: Allow
             Action:
               - sns:Publish
             Resource:
-              - !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:downwind-city-*
+              - !Ref CitySnsTopicDelhi
+              - !Ref CitySnsTopicGurugram
+              - !Ref CitySnsTopicNoida
+              - !Ref CitySnsTopicGhaziabad
+              - !Ref CitySnsTopicFaridabad
+              - !Ref CitySnsTopicChandigarh
+              - !Ref CitySnsTopicLudhiana
+              - !Ref CitySnsTopicAmritsar
+              - !Ref CitySnsTopicPatiala
+              - !Ref CitySnsTopicJalandhar
+              - !Ref CitySnsTopicKarnal
+              - !Ref CitySnsTopicPanipat
+              - !Ref CitySnsTopicAmbala
+              - !Ref CitySnsTopicRohtak
+              - !Ref CitySnsTopicHisar
       Tags:
         Environment: !Ref Environment
         Project: downwind

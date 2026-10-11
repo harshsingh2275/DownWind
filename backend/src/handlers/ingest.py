@@ -252,27 +252,37 @@ def _write_impact(
     failed = 0
 
     for record in impact_records:
-        item: dict[str, Any] = {
-            "day": ist_day,
-            "cityId": record["cityId"],
-            "cityName": record.get("cityName", ""),
-            "nClusters": record.get("nClusters", 0),
-            "totalFrp": str(record.get("totalFrp", 0.0)),
-            "nearestKm": str(record.get("nearestKm", 0.0)),
-            "minEtaHours": str(record.get("minEtaHours", 0.0)),
-            "severity": record.get("severity", "Low"),
-            "affectedByClusterIds": record.get("affectedByClusterIds", []),
-            "ttl": ttl_val,
-        }
+        city_id = record["cityId"]
         try:
-            table.put_item(Item=item)
+            # Use update_item to update impact metrics WITHOUT wiping out lastAlertedAtUtc
+            table.update_item(
+                Key={"day": ist_day, "cityId": city_id},
+                UpdateExpression=(
+                    "SET cityName = :cn, nClusters = :nc, totalFrp = :tf, "
+                    "nearestKm = :nk, minEtaHours = :me, severity = :sev, "
+                    "affectedByClusterIds = :cl, #ttl_attr = :ttl"
+                ),
+                ExpressionAttributeNames={
+                    "#ttl_attr": "ttl",
+                },
+                ExpressionAttributeValues={
+                    ":cn": record.get("cityName", ""),
+                    ":nc": record.get("nClusters", 0),
+                    ":tf": str(record.get("totalFrp", 0.0)),
+                    ":nk": str(record.get("nearestKm", 0.0)),
+                    ":me": str(record.get("minEtaHours", 0.0)),
+                    ":sev": record.get("severity", "Low"),
+                    ":cl": record.get("affectedByClusterIds", []),
+                    ":ttl": ttl_val,
+                },
+            )
             written += 1
         except Exception as exc:
             failed += 1
             _log(
                 "ERROR",
                 "Failed to write impact to DynamoDB",
-                city_id=record.get("cityId"),
+                city_id=city_id,
                 error_type=type(exc).__name__,
             )
 
@@ -280,42 +290,66 @@ def _write_impact(
 
 
 # ---------------------------------------------------------------------------
-# SNS alert publishing
+# SNS alert publishing with conditional DynamoDB lock (T-037)
 # ---------------------------------------------------------------------------
-def _should_alert(
+def _attempt_claim_alert(
     city_id: str,
-    severity: str,
     ist_day: str,
     impact_table_name: str,
+    now_utc_iso: str,
 ) -> bool:
-    """Check DynamoDB to see if the alert cooldown has passed for this city.
+    """Atomically claim the alert right for a city using a conditional DynamoDB update.
 
-    Reads the stored `lastAlertedAtUtc` field from the Impact table.
-    Returns True if no previous alert or cooldown window has elapsed.
+    Returns True if this invocation successfully acquired the alert lock;
+    returns False if the city is inside the cooldown window or another concurrent run
+    already claimed the alert.
 
-    This is a best-effort check: on DynamoDB read failure we return False
-    (safe default: do not over-alert).
+    Condition:
+      attribute_not_exists(lastAlertedAtUtc) OR lastAlertedAtUtc < :cutoff
     """
-    if severity not in ("High", "Medium"):
-        return False
+    now_dt = datetime.fromisoformat(now_utc_iso.replace("Z", "+00:00"))
+    cutoff_iso = (now_dt - timedelta(hours=ALERT_COOLDOWN_HOURS)).isoformat()
+
+    dynamo = _get_dynamo_resource()
+    table = dynamo.Table(impact_table_name)
 
     try:
-        dynamo = _get_dynamo_resource()
-        table = dynamo.Table(impact_table_name)
-        response = table.get_item(Key={"day": ist_day, "cityId": city_id})
-        item = response.get("Item", {})
-        last_alerted = item.get("lastAlertedAtUtc", "")
-        if not last_alerted:
-            return True
-        last_dt = datetime.fromisoformat(last_alerted.replace("Z", "+00:00"))
-        hours_elapsed = (datetime.now(tz=timezone.utc) - last_dt).total_seconds() / 3600
-        return hours_elapsed >= ALERT_COOLDOWN_HOURS
+        table.update_item(
+            Key={"day": ist_day, "cityId": city_id},
+            UpdateExpression="SET lastAlertedAtUtc = :now",
+            ConditionExpression=(
+                "attribute_not_exists(lastAlertedAtUtc) OR lastAlertedAtUtc < :cutoff"
+            ),
+            ExpressionAttributeValues={
+                ":now": now_utc_iso,
+                ":cutoff": cutoff_iso,
+            },
+        )
+        return True
     except Exception as exc:
+        exc_name = type(exc).__name__
+        error_code = ""
+        if hasattr(exc, "response") and isinstance(exc.response, dict):
+            error_code = exc.response.get("Error", {}).get("Code", "")
+
+        if (
+            exc_name == "ConditionalCheckFailedException"
+            or error_code == "ConditionalCheckFailedException"
+        ):
+            _log(
+                "INFO",
+                "Alert suppressed by cooldown or concurrent claim",
+                city_id=city_id,
+                day=ist_day,
+            )
+            return False
+
         _log(
             "WARN",
-            "Could not check alert cooldown from DynamoDB; skipping alert",
+            "Conditional DynamoDB update failed; skipping alert to prevent over-alerting",
             city_id=city_id,
-            error_type=type(exc).__name__,
+            error_type=exc_name,
+            error=str(exc),
         )
         return False
 
@@ -329,26 +363,35 @@ def _publish_city_alert(
     total_frp: float,
     nearest_km: float,
     min_eta_hours: float,
-    account_id: str,
-    region: str,
+    account_id: str = "",
+    region: str = "",
 ) -> None:
     """Publish a smoke-path alert to the per-city SNS topic."""
-    topic_arn = (
-        f"arn:aws:sns:{region}:{account_id}:{SNS_CITY_TOPIC_PREFIX}{city_id}"
-    )
-    subject = f"[DownWind] {severity} smoke alert for {city_name} — {ist_day}"
+    env = os.environ.get("ENVIRONMENT", "prod")
+    prefix = os.environ.get("CITY_TOPIC_PREFIX")
+    if prefix:
+        topic_arn = f"{prefix}{city_id}-{env}"
+    else:
+        region = region or os.environ.get("AWS_REGION", "ap-south-1")
+        account_id = account_id or os.environ.get("AWS_ACCOUNT_ID", "694442891430")
+        topic_arn = f"arn:aws:sns:{region}:{account_id}:downwind-city-{city_id}-{env}"
+
+    site_url = os.environ.get("SITE_URL", "https://downwind.local")
+
+    subject = f"[DownWind] High Smoke Alert for {city_name} — {ist_day}"
     body = (
         f"DownWind Smoke Alert\n\n"
         f"City: {city_name}\n"
-        f"Severity: {severity} (Indicative)\n"
+        f"Severity: {severity} (Estimate)\n"
         f"Date: {ist_day}\n"
-        f"Active fire clusters: {n_clusters}\n"
+        f"Estimated Smoke Arrival (ETA): {min_eta_hours:.1f} hours\n"
+        f"Active Fire Clusters: {n_clusters}\n"
         f"Total Fire Radiative Power: {total_frp:.1f} MW\n"
-        f"Nearest cluster: {nearest_km:.0f} km\n"
-        f"Estimated smoke arrival: {min_eta_hours:.1f} hours\n\n"
-        "This is an automated estimate based on satellite fire data and wind "
-        "forecasts. It is indicative only.\n\n"
-        "Unsubscribe: use the link in this email from AWS SNS."
+        f"Distance to Nearest Cluster: {nearest_km:.0f} km\n\n"
+        "This advisory is an automated smoke plume estimate derived from satellite "
+        "fire detections and wind forecast models. It is indicative only.\n\n"
+        f"View live map and full impact report:\n{site_url}\n\n"
+        "To unsubscribe, use the link provided below by AWS SNS."
     )
     try:
         sns = _get_sns_client()
@@ -358,7 +401,6 @@ def _publish_city_alert(
             "SNS alert published",
             city_id=city_id,
             severity=severity,
-            topic_arn=topic_arn,
         )
     except Exception as exc:
         _log(
@@ -532,25 +574,27 @@ def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     partial_failures += i_failed
     _log("INFO", "Impact records written", written=i_written, failed=i_failed)
 
-    # ── 10. SNS alerts ────────────────────────────────────────────────────
+    # ── 10. SNS alerts (High severity only, conditional update cooldown check)
     alerts_sent = 0
+    now_utc_iso = datetime.now(tz=timezone.utc).isoformat()
     for record in impact_records:
         city_id = record["cityId"]
         severity = record.get("severity", "Low")
-        if _should_alert(city_id, severity, ist_day, impact_table):
-            _publish_city_alert(
-                city_id=city_id,
-                city_name=record.get("cityName", city_id),
-                severity=severity,
-                ist_day=ist_day,
-                n_clusters=record.get("nClusters", 0),
-                total_frp=float(record.get("totalFrp", 0.0)),
-                nearest_km=float(record.get("nearestKm", 0.0)),
-                min_eta_hours=float(record.get("minEtaHours", 0.0)),
-                account_id=aws_account_id,
-                region=aws_region,
-            )
-            alerts_sent += 1
+        if severity == "High":
+            if _attempt_claim_alert(city_id, ist_day, impact_table, now_utc_iso):
+                _publish_city_alert(
+                    city_id=city_id,
+                    city_name=record.get("cityName", city_id),
+                    severity=severity,
+                    ist_day=ist_day,
+                    n_clusters=record.get("nClusters", 0),
+                    total_frp=float(record.get("totalFrp", 0.0)),
+                    nearest_km=float(record.get("nearestKm", 0.0)),
+                    min_eta_hours=float(record.get("minEtaHours", 0.0)),
+                    account_id=aws_account_id,
+                    region=aws_region,
+                )
+                alerts_sent += 1
 
     elapsed = round(time.time() - start_ts, 2)
     summary = {

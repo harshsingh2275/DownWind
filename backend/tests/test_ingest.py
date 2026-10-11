@@ -115,12 +115,16 @@ def _mock_ssm(key_value: str = "test-firms-key-abc123") -> MagicMock:
     return ssm
 
 
-def _mock_dynamo(put_side_effect: Any = None) -> MagicMock:
-    """[MOCK] boto3 DynamoDB resource: Table.put_item and Table.get_item stubbed."""
+def _mock_dynamo(put_side_effect: Any = None, update_side_effect: Any = None) -> MagicMock:
+    """[MOCK] boto3 DynamoDB resource: Table.put_item, update_item, and Table.get_item stubbed."""
     dynamo = MagicMock()
     table = MagicMock()
     table.put_item.side_effect = put_side_effect
     table.put_item.return_value = {} if put_side_effect is None else table.put_item.return_value
+    table.update_item.side_effect = update_side_effect
+    table.update_item.return_value = (
+        {} if update_side_effect is None else table.update_item.return_value
+    )
     table.get_item.return_value = {"Item": {}}
     dynamo.Table.return_value = table
     return dynamo
@@ -392,3 +396,206 @@ def test_wind_fetch_failure_raises_runtime_error() -> None:
         pytest.raises(RuntimeError, match="Wind pipeline failed"),
     ):
         mod.lambda_handler({}, None)
+
+
+class ConditionalCheckFailedException(Exception):
+    """Simulates botocore ConditionalCheckFailedException."""
+
+    def __init__(self) -> None:
+        super().__init__("The conditional request failed")
+        self.response = {"Error": {"Code": "ConditionalCheckFailedException"}}
+
+
+# ---------------------------------------------------------------------------
+# Tests for Alert Dispatch, Cooldown, and Concurrency (T-037)
+# ---------------------------------------------------------------------------
+class TestAlertDispatchAndCooldown:
+    def test_alert_dispatched_when_severity_high_and_no_prior_alert(self) -> None:
+        """High severity impact with no prior alert triggers atomic update and SNS publish."""
+        mod = _fresh_ingest()
+        dynamo = _mock_dynamo()
+        sns = _mock_sns()
+        _inject_clients(mod, ssm=_mock_ssm(), dynamo=dynamo, sns=sns)
+
+        now_iso = "2024-11-01T10:00:00+00:00"
+        claimed = mod._attempt_claim_alert("delhi", "2024-11-01", "downwind-impact-test", now_iso)
+        assert claimed is True
+
+        # Verify conditional update called on DynamoDB with ConditionExpression
+        table = dynamo.Table.return_value
+        table.update_item.assert_called_once()
+        call_kwargs = table.update_item.call_args.kwargs
+        assert call_kwargs["Key"] == {"day": "2024-11-01", "cityId": "delhi"}
+        assert (
+            "attribute_not_exists(lastAlertedAtUtc) OR lastAlertedAtUtc < :cutoff"
+            in call_kwargs["ConditionExpression"]
+        )
+        assert call_kwargs["ExpressionAttributeValues"][":now"] == now_iso
+
+        # Now test publish
+        mod._publish_city_alert(
+            city_id="delhi",
+            city_name="Delhi",
+            severity="High",
+            ist_day="2024-11-01",
+            n_clusters=15,
+            total_frp=650.0,
+            nearest_km=25.0,
+            min_eta_hours=2.5,
+        )
+        sns.publish.assert_called_once()
+        publish_kwargs = sns.publish.call_args.kwargs
+        assert publish_kwargs["TopicArn"].endswith("downwind-city-delhi-prod")
+        message = publish_kwargs["Message"]
+        assert "Delhi" in message
+        assert "2.5 hours" in message
+        assert "High" in message
+        assert "estimate" in message.lower()
+        assert "https://downwind.local" in message
+
+    def test_alert_suppressed_inside_cooldown(self) -> None:
+        """When an alert was already sent within 12h, DynamoDB condition fails and no SNS sent."""
+        mod = _fresh_ingest()
+        dynamo = _mock_dynamo()
+        # Simulate DynamoDB conditional check failed
+        dynamo.Table.return_value.update_item.side_effect = ConditionalCheckFailedException()
+
+        sns = _mock_sns()
+        _inject_clients(mod, ssm=_mock_ssm(), dynamo=dynamo, sns=sns)
+
+        now_iso = "2024-11-01T12:00:00+00:00"
+        claimed = mod._attempt_claim_alert("delhi", "2024-11-01", "downwind-impact-test", now_iso)
+        assert claimed is False
+        # SNS must NOT be called
+        sns.publish.assert_not_called()
+
+    def test_alert_allowed_outside_cooldown(self) -> None:
+        """When the previous alert is older than 12h, conditional update succeeds."""
+        mod = _fresh_ingest()
+        dynamo = _mock_dynamo()
+        sns = _mock_sns()
+        _inject_clients(mod, ssm=_mock_ssm(), dynamo=dynamo, sns=sns)
+
+        now_iso = "2024-11-01T22:00:00+00:00"
+        claimed = mod._attempt_claim_alert("delhi", "2024-11-01", "downwind-impact-test", now_iso)
+        assert claimed is True
+        dynamo.Table.return_value.update_item.assert_called_once()
+
+    def test_concurrent_invocations_only_send_once(self) -> None:
+        """When two concurrent runs execute, only the winning run publishes an alert."""
+        mod = _fresh_ingest()
+        dynamo = _mock_dynamo()
+        sns = _mock_sns()
+
+        # Run 1 succeeds, Run 2 fails conditional update
+        dynamo.Table.return_value.update_item.side_effect = [{}, ConditionalCheckFailedException()]
+
+        _inject_clients(mod, ssm=_mock_ssm(), dynamo=dynamo, sns=sns)
+
+        now_iso = "2024-11-01T10:00:00+00:00"
+        # Run 1
+        claim1 = mod._attempt_claim_alert("delhi", "2024-11-01", "downwind-impact-test", now_iso)
+        # Run 2 (concurrent)
+        claim2 = mod._attempt_claim_alert("delhi", "2024-11-01", "downwind-impact-test", now_iso)
+
+        assert claim1 is True
+        assert claim2 is False
+
+        # If only claim1 publishes:
+        if claim1:
+            mod._publish_city_alert("delhi", "Delhi", "High", "2024-11-01", 10, 500.0, 30.0, 3.0)
+        if claim2:
+            mod._publish_city_alert("delhi", "Delhi", "High", "2024-11-01", 10, 500.0, 30.0, 3.0)
+
+        # SNS publish was called exactly ONCE across the two runs
+        assert sns.publish.call_count == 1
+
+    def test_alert_message_exposes_no_internal_details(self) -> None:
+        """Alert message body must contain city, ETA, severity, estimate, link, NO internals."""
+        mod = _fresh_ingest()
+        sns = _mock_sns()
+        _inject_clients(mod, ssm=_mock_ssm(), dynamo=_mock_dynamo(), sns=sns)
+
+        mod._publish_city_alert(
+            city_id="ludhiana",
+            city_name="Ludhiana",
+            severity="High",
+            ist_day="2024-11-01",
+            n_clusters=8,
+            total_frp=520.0,
+            nearest_km=18.5,
+            min_eta_hours=1.8,
+            account_id="694442891430",
+            region="ap-south-1",
+        )
+
+        sns.publish.assert_called_once()
+        body = sns.publish.call_args.kwargs["Message"]
+
+        # Required fields
+        assert "Ludhiana" in body
+        assert "1.8 hours" in body
+        assert "High" in body
+        assert "estimate" in body.lower()
+        assert "https://" in body
+
+        # Internal details that must NOT appear in user-facing message body
+        assert "694442891430" not in body  # AWS account ID
+        assert "arn:aws:" not in body  # AWS ARN
+        assert "downwind-impact" not in body  # DynamoDB table name
+        assert "downwind-clusters" not in body
+        assert "IngestFunction" not in body
+        assert "lambda" not in body.lower()
+
+    def test_pipeline_only_alerts_on_high_severity(self) -> None:
+        """In pipeline, cities with Medium or Low severity do not attempt alert claim or SNS."""
+        mod = _fresh_ingest()
+        dynamo = _mock_dynamo()
+        sns = _mock_sns()
+        _inject_clients(mod, ssm=_mock_ssm(), dynamo=dynamo, sns=sns)
+        mod._cached_firms_key = "cached-key"
+
+        # Impact record with Medium severity
+        medium_impact = [
+            {
+                "cityId": "karnal",
+                "cityName": "Karnal",
+                "severity": "Medium",
+                "nClusters": 5,
+                "totalFrp": 200.0,
+                "nearestKm": 40.0,
+                "minEtaHours": 4.0,
+            }
+        ]
+
+        with (
+            patch.object(mod, "fetch_firms_csv", return_value="dummy,csv"),
+            patch.object(
+                mod,
+                "parse_firms_csv",
+                return_value=[
+                    {
+                        "lat": 30.0,
+                        "lon": 75.0,
+                        "frp": 10.0,
+                        "confidence": "high",
+                        "acq_datetime_utc": "2024-11-01T06:00:00Z",
+                    }
+                ],
+            ),
+            patch.object(mod, "fetch_wind_data", return_value=DUMMY_WIND_DATA),
+            patch.object(mod, "load_region_boundary", return_value={}),
+            patch.object(mod, "is_point_in_geojson", return_value=True),
+            patch.object(mod, "compute_impact", return_value=medium_impact),
+            patch.object(mod, "json") as mock_json,
+            patch("builtins.open", MagicMock()),
+        ):
+            mock_json.dumps = json.dumps
+            mock_json.load.return_value = SAMPLE_CITIES
+            mock_json.loads = json.loads
+
+            summary = mod.lambda_handler({}, None)
+
+            # 0 alerts sent for Medium severity
+            assert summary["alerts_sent"] == 0
+            sns.publish.assert_not_called()
