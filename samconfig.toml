@@ -29,8 +29,8 @@ resolve_s3        = true
 # Do NOT set FirmsKeyParameterName to the actual secret — only the SSM path.
 parameter_overrides = [
   "Environment=prod",
-  "IngestScheduleExpression=rate(30 minutes)",
   "FirmsKeyParameterName=/downwind/firms-map-key",
+  "OpsAlertEmail=singhshashwat2275@gmail.com",
   "DynamoTtlDays=7",
   "ApiThrottlingBurstLimit=100",
   "ApiThrottlingRateLimit=50"

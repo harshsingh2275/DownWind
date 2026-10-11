@@ -26,3 +26,10 @@ warn_unused_configs = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# boto3 is only present in the Lambda runtime, not in the local dev env.
+# boto3-stubs are not a project dependency (D-002: stdlib only for new deps).
+# Suppress the import-not-found error for boto3 in mypy.
+[[tool.mypy.overrides]]
+module = "boto3"
+ignore_missing_imports = true

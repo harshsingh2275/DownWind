@@ -17,17 +17,22 @@ from typing import Any
 
 def lambda_handler(event: dict[str, Any], context: object) -> dict[str, Any]:
     """Top-level dispatcher; routes to ingest or API handler based on event shape."""
-    # EventBridge scheduled events have a "source" key of "aws.events"
-    if event.get("source") == "aws.events":
-        from src.handlers.ingest import lambda_handler as ingest_handler
-
-        return ingest_handler(event, context)
-
     # API Gateway HTTP API events have a "requestContext" with "http" sub-key
     if "requestContext" in event and "http" in event.get("requestContext", {}):
         from src.handlers.api import lambda_handler as api_handler
 
         return api_handler(event, context)
+
+    # EventBridge scheduled events, manual CLI invocations, or empty test events -> ingest
+    if (
+        event.get("source") == "aws.events"
+        or event.get("action") == "manual"
+        or not event
+        or "requestContext" not in event
+    ):
+        from src.handlers.ingest import lambda_handler as ingest_handler
+
+        return ingest_handler(event, context)
 
     # Unknown event source — log and return a 400-equivalent for safety
     return {
